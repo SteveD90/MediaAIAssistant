@@ -1,0 +1,27 @@
+services:
+  media-ai:
+    build: .
+    container_name: media-ai-assistant
+    ports:
+      - "5050:5050"
+    environment:
+      OPENAI_API_KEY: "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"
+      OPENAI_MODEL_NAME: "gpt-4.1-mini"
+
+      # Use your NAS IP + ports here:
+      SONARR_URL: "http://10.0.0.8:8989"
+      SONARR_API_KEY: "fd2e298cf987481286664d1cfc082199"
+
+      RADARR_URL: "http://10.0.0.8:7878"
+      RADARR_API_KEY: "a3d9bdc857064a0ba0fc94ef6e951ff1"
+
+      # Match whatever root paths & profiles Sonarr/Radarr already use
+      SONARR_ROOT_FOLDER: "/media/tv"
+      SONARR_QUALITY_PROFILE_ID: "7"
+      SONARR_LANGUAGE_PROFILE_ID: "7"
+
+      RADARR_ROOT_FOLDER: "/media/movies"
+      RADARR_QUALITY_PROFILE_ID: "7"
+
+      LIBRARY_SAMPLE_SIZE: "50"
+      FLASK_SECRET_KEY: "some-random-string"
