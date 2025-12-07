@@ -8,7 +8,7 @@ services:
       - "nas:10.0.0.8"
     environment:
       OPENAI_API_KEY: "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"
-      OPENAI_MODEL_NAME: "gpt-4.1-mini"
+      OPENAI_MODEL_NAME: "gpt-5-nano"
 
       # Use your NAS IP + ports here:
       SONARR_URL: "http://10.0.0.8:8989"

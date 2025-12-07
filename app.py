@@ -19,6 +19,8 @@ from openai import OpenAI
 # ---------- CONFIG FROM ENV ----------
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "replace-with-your-key")
 MODEL_NAME = os.getenv("OPENAI_MODEL_NAME", "gpt-4.1-mini")
+# Optional: set OPENAI_TEMPERATURE to a float (0.0 - 2.0). If unset, the client's default is used.
+OPENAI_TEMPERATURE = os.getenv("OPENAI_TEMPERATURE")
 
 SONARR_URL = os.getenv("SONARR_URL", "http://sonarr:8989")
 SONARR_API_KEY = os.getenv("SONARR_API_KEY", "")
@@ -90,7 +92,7 @@ def fetch_sonarr_sample() -> List[Dict[str, Any]]:
             "title": s.get("title"),
             "year": s.get("year"),
             "genres": s.get("genres"),
-            "status": s.get("status"),
+            "status": s.get("status),
             "network": s.get("network"),
         }
         for s in series[:SAMPLE_SIZE]
@@ -217,15 +219,18 @@ def get_recommendations(user_request: str, media_type: str):
         f"{type_hint}"
     )
 
-    resp = client.chat.completions.create(
-        model=MODEL_NAME,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_content},
-        ],
-        max_tokens=800,
-        temperature=0.65,
-    )
+    req_kwargs = {
+      "model": MODEL_NAME,
+      "messages": [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": user_content},
+      ],
+      "max_tokens": 800,
+    }
+
+    # Temperature parameter removed - not supported by all models (e.g., gpt-5-nano)
+
+    resp = client.chat.completions.create(**req_kwargs)
 
     raw = resp.choices[0].message.content.strip()
 
@@ -870,14 +875,12 @@ def specific_search():
     if not search_query:
         flash("Please enter a search query.", "error")
     else:
-        # Search in Sonarr and Radarr
         try:
             if search_type == "title":
-                # Search both Sonarr and Radarr
                 sonarr_results = sonarr_get("/series/lookup", params={"term": search_query})
                 radarr_results = radarr_get("/movie/lookup", params={"term": search_query})
-                
-                for item in sonarr_results[:10]:  # Limit to 10 results
+
+                for item in sonarr_results[:10]:
                     search_results.append({
                         "title": item.get("title"),
                         "year": item.get("year"),
@@ -885,8 +888,8 @@ def specific_search():
                         "overview": item.get("overview", "")[:200] + "..." if item.get("overview") else "",
                         "imdb_id": item.get("imdbId")
                     })
-                
-                for item in radarr_results[:10]:  # Limit to 10 results
+
+                for item in radarr_results[:10]:
                     search_results.append({
                         "title": item.get("title"),
                         "year": item.get("year"),
@@ -894,34 +897,31 @@ def specific_search():
                         "overview": item.get("overview", "")[:200] + "..." if item.get("overview") else "",
                         "imdb_id": item.get("imdbId")
                     })
-            
+
             elif search_type == "actor":
-                # Use OpenAI to find titles by actor, then search those titles
                 print(f"[specific_search] Searching for actor: {search_query}")
-                
-                # Ask OpenAI for titles featuring this actor
+
                 prompt = f"List 10 popular movies and TV shows featuring {search_query}. Format as: 'Title (Year)' one per line. Only include the titles, nothing else."
-                
-                response = client.chat.completions.create(
-                    model=MODEL_NAME,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3,
-                )
-                
+
+                req_kwargs = {
+                    "model": MODEL_NAME,
+                    "messages": [{"role": "user", "content": prompt}],
+                }
+
+                # Temperature parameter removed - not supported by all models (e.g., gpt-5-nano)
+
+                response = client.chat.completions.create(**req_kwargs)
+
                 titles_text = response.choices[0].message.content.strip()
                 print(f"[specific_search] AI suggested titles: {titles_text}")
-                
-                # Parse the titles and search for them
+
                 for line in titles_text.split('\n')[:10]:
-                    # Extract title from "Title (Year)" format
                     title = line.split('(')[0].strip()
                     if title:
                         try:
-                            # Search in both services
                             sonarr_results = sonarr_get("/series/lookup", params={"term": title})
                             radarr_results = radarr_get("/movie/lookup", params={"term": title})
-                            
-                            # Add first match from each service
+
                             if sonarr_results:
                                 item = sonarr_results[0]
                                 search_results.append({
@@ -931,7 +931,7 @@ def specific_search():
                                     "overview": item.get("overview", "")[:200] + "..." if item.get("overview") else "",
                                     "imdb_id": item.get("imdbId")
                                 })
-                            
+
                             if radarr_results:
                                 item = radarr_results[0]
                                 search_results.append({
@@ -943,13 +943,13 @@ def specific_search():
                                 })
                         except Exception as lookup_error:
                             print(f"[specific_search] Error looking up '{title}': {lookup_error}")
-                
+
                 flash(f"Found {len(search_results)} titles featuring {search_query}", "success")
-                
+
         except Exception as e:
             print(f"[specific_search] Error: {e}")
             flash("Error searching. Check logs.", "error")
-    
+
     return render_template_string(
         TEMPLATE,
         recs=[],
@@ -1376,4 +1376,5 @@ def clear_history():
 
 
 if __name__ == "__main__":
+
     app.run(host="0.0.0.0", port=5050)
