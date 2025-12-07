@@ -92,7 +92,7 @@ def fetch_sonarr_sample() -> List[Dict[str, Any]]:
             "title": s.get("title"),
             "year": s.get("year"),
             "genres": s.get("genres"),
-            "status": s.get("status),
+            "status": s.get("status"),
             "network": s.get("network"),
         }
         for s in series[:SAMPLE_SIZE]
