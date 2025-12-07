@@ -905,6 +905,9 @@ def index():
         recs=recs,
         request_text=request_text,
         media_type=media_type,
+        search_results=[],
+        search_query="",
+        search_type="title"
     )
 
 
