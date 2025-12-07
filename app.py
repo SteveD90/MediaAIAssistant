@@ -36,6 +36,7 @@ RADARR_ROOT_FOLDER = os.getenv("RADARR_ROOT_FOLDER", "/mnt/tank/media/Movies")
 RADARR_QUALITY_PROFILE_ID = int(os.getenv("RADARR_QUALITY_PROFILE_ID", "7"))
 
 SAMPLE_SIZE = int(os.getenv("LIBRARY_SAMPLE_SIZE", "120"))
+ACTOR_SEARCH_LIMIT = int(os.getenv("ACTOR_SEARCH_LIMIT", "5"))
 # -------------------------------------
 
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -901,7 +902,16 @@ def specific_search():
             elif search_type == "actor":
                 print(f"[specific_search] Searching for actor: {search_query}")
 
-                prompt = f"List 10 popular movies and TV shows featuring {search_query}. Format as: 'Title (Year)' one per line. Only include the titles, nothing else."
+                prompt = f"""List the {ACTOR_SEARCH_LIMIT} most popular and well-known movies and TV shows where {search_query} is a main cast member or has a significant role.
+
+IMPORTANT: Only include titles where {search_query} actually appears as an actor. Do not make up titles.
+
+Format each as: 'Title (Year)' one per line.
+Example format:
+30 Rock (2006)
+The Longest Yard (2005)
+
+Only the titles, nothing else."""
 
                 req_kwargs = {
                     "model": MODEL_NAME,
@@ -915,7 +925,7 @@ def specific_search():
                 titles_text = response.choices[0].message.content.strip()
                 print(f"[specific_search] AI suggested titles: {titles_text}")
 
-                for line in titles_text.split('\n')[:10]:
+                for line in titles_text.split('\n')[:ACTOR_SEARCH_LIMIT]:
                     title = line.split('(')[0].strip()
                     if title:
                         try:
