@@ -275,73 +275,23 @@ def get_recommendations(user_request: str, media_type: str):
 
 # ---------- ADD TO *ARR ----------
 def get_radarr_defaults() -> tuple[str | None, int | None]:
-    root_path = None
-    profile_id = None
-
-    try:
-        roots = radarr_get("/rootfolder")
-        if roots:
-            root_path = roots[0].get("path")
-    except Exception as e:
-        print("[Radarr] error loading root folders:", e)
-
-    try:
-        profiles = radarr_get("/qualityprofile")
-        if profiles:
-            profile_id = profiles[0].get("id")
-    except Exception as e:
-        print("[Radarr] error loading quality profiles:", e)
-
-    if root_path is None:
-        root_path = RADARR_ROOT_FOLDER
-    if profile_id is None:
-        try:
-            profile_id = int(RADARR_QUALITY_PROFILE_ID)
-        except Exception:
-            profile_id = 1
-
+    # Use environment variable values directly
+    root_path = RADARR_ROOT_FOLDER
+    profile_id = RADARR_QUALITY_PROFILE_ID
+    
+    print(f"[Radarr] Using root_path={root_path}, profile_id={profile_id}")
+    
     return root_path, profile_id
 
 
 def get_sonarr_defaults() -> tuple[str | None, int | None, int | None]:
-    root_path: str | None = None
-    quality_id: int | None = None
-    language_id: int | None = None
-
-    try:
-        roots = sonarr_get("/rootfolder")
-        if roots:
-            root_path = roots[0].get("path")
-    except Exception as e:
-        print("[Sonarr] error loading root folders:", e)
-
-    try:
-        profiles = sonarr_get("/qualityprofile")
-        if profiles:
-            quality_id = profiles[0].get("id")
-    except Exception as e:
-        print("[Sonarr] error loading quality profiles:", e)
-
-    try:
-        langs = sonarr_get("/languageprofile")
-        if langs:
-            language_id = langs[0].get("id")
-    except Exception as e:
-        print("[Sonarr] error loading language profiles:", e)
-
-    if root_path is None:
-        root_path = SONARR_ROOT_FOLDER
-    if quality_id is None:
-        try:
-            quality_id = int(SONARR_QUALITY_PROFILE_ID)
-        except Exception:
-            quality_id = 1
-    if language_id is None:
-        try:
-            language_id = int(SONARR_LANGUAGE_PROFILE_ID)
-        except Exception:
-            language_id = 1
-
+    # Use environment variable values directly
+    root_path = SONARR_ROOT_FOLDER
+    quality_id = SONARR_QUALITY_PROFILE_ID
+    language_id = SONARR_LANGUAGE_PROFILE_ID
+    
+    print(f"[Sonarr] Using root_path={root_path}, quality_id={quality_id}, language_id={language_id}")
+    
     return root_path, quality_id, language_id
 
 
