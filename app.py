@@ -905,7 +905,7 @@ def specific_search():
                 response = client.chat.completions.create(
                     model=MODEL_NAME,
                     messages=[{"role": "user", "content": prompt}],
-                    temperature=0.3,
+                    temperature=1,
                 )
                 
                 titles_text = response.choices[0].message.content.strip()
@@ -1376,4 +1376,5 @@ def clear_history():
 
 
 if __name__ == "__main__":
+
     app.run(host="0.0.0.0", port=5050)
