@@ -148,16 +148,22 @@ def attach_imdb_ids(recs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 results = sonarr_get("/series/lookup", params={"term": term})
                 if results:
                     imdb_id = results[0].get("imdbId")
-                    ratings_obj = results[0].get("ratings", {})
-                    if ratings_obj:
+                    ratings_obj = results[0].get("ratings")
+                    if ratings_obj and isinstance(ratings_obj, dict):
                         rating = ratings_obj.get("value")
+                        print(f"[attach_imdb_ids] TV '{title}': rating={rating}, ratings_obj={ratings_obj}")
+                    else:
+                        print(f"[attach_imdb_ids] TV '{title}': No ratings object (got {type(ratings_obj)})")
             else:
                 results = radarr_get("/movie/lookup", params={"term": term})
                 if results:
                     imdb_id = results[0].get("imdbId")
-                    ratings_obj = results[0].get("ratings", {})
-                    if ratings_obj:
+                    ratings_obj = results[0].get("ratings")
+                    if ratings_obj and isinstance(ratings_obj, dict):
                         rating = ratings_obj.get("value")
+                        print(f"[attach_imdb_ids] Movie '{title}': rating={rating}, ratings_obj={ratings_obj}")
+                    else:
+                        print(f"[attach_imdb_ids] Movie '{title}': No ratings object (got {type(ratings_obj)})")
         except Exception as e:
             print("[attach_imdb_ids] lookup error for term:", term, "error:", e)
 
