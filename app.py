@@ -1,9 +1,9 @@
 # (Replace your existing app.py with this file)
 import os
 import json
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Set
 from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
 from threading import Lock
 import time
 
@@ -238,16 +238,20 @@ def attach_imdb_ids(recs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
         return {**r, "imdb_id": imdb_id, "rating": rating}
     
-    # Use ThreadPoolExecutor for concurrent lookups with timeout
+    # Use ThreadPoolExecutor for concurrent lookups with per-future timeout
     with ThreadPoolExecutor(max_workers=5) as executor:
         future_to_rec = {executor.submit(lookup_single_rec, rec): i for i, rec in enumerate(recs)}
         results = [None] * len(recs)
         
-        # Add timeout of 60 seconds per lookup
-        for future in as_completed(future_to_rec, timeout=60):
+        # Process futures as they complete with per-future timeout
+        for future in as_completed(future_to_rec):
             idx = future_to_rec[future]
             try:
-                results[idx] = future.result()
+                # 60 second timeout per individual future
+                results[idx] = future.result(timeout=60)
+            except TimeoutError:
+                print(f"[attach_imdb_ids] Timeout processing recommendation at index {idx}")
+                results[idx] = {**recs[idx], "imdb_id": None, "rating": None}
             except Exception as e:
                 print(f"[attach_imdb_ids] Error processing recommendation: {e}")
                 # Return original rec with None values on error
@@ -290,14 +294,14 @@ def is_talk_show(title: str) -> bool:
     return any(pattern in title_lower for pattern in talk_show_patterns)
 
 
-def get_owned_title_sets() -> Tuple[set[str], set[str]]:
+def get_owned_title_sets() -> Tuple[Set[str], Set[str]]:
     """Get sets of owned TV shows and movies using cached library data.
     
     Returns:
         Tuple of (owned_tv_titles, owned_movie_titles) as normalized title sets
     """
-    owned_tv = set()
-    owned_movies = set()
+    owned_tv: Set[str] = set()
+    owned_movies: Set[str] = set()
 
     # Reuse cached library data if available
     try:
@@ -1270,16 +1274,19 @@ def specific_search():
                         
                         return None
 
-                    # Use ThreadPoolExecutor for concurrent lookups with timeout
+                    # Use ThreadPoolExecutor for concurrent lookups with per-future timeout
                     with ThreadPoolExecutor(max_workers=5) as executor:
                         futures = [executor.submit(lookup_credit, credit) for credit in tmdb_credits]
                         
-                        # Add timeout of 60 seconds per lookup
-                        for future in as_completed(futures, timeout=60):
+                        # Process futures as they complete with per-future timeout
+                        for future in as_completed(futures):
                             try:
-                                result = future.result()
+                                # 60 second timeout per individual future
+                                result = future.result(timeout=60)
                                 if result:
                                     search_results.append(result)
+                            except TimeoutError:
+                                print(f"[specific_search] Timeout processing credit")
                             except Exception as e:
                                 print(f"[specific_search] Error processing credit: {e}")
 
