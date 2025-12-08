@@ -15,7 +15,7 @@ services:
 
       # Performance settings
       LIBRARY_SAMPLE_SIZE: "50"
-      ACTOR_SEARCH_LIMIT: "5"
+      ACTOR_SEARCH_LIMIT: "15"
 
       # Use your NAS IP + ports here:
       SONARR_URL: "http://10.0.0.8:8989"

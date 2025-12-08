@@ -36,7 +36,7 @@ RADARR_ROOT_FOLDER = os.getenv("RADARR_ROOT_FOLDER", "/mnt/tank/media/Movies")
 RADARR_QUALITY_PROFILE_ID = int(os.getenv("RADARR_QUALITY_PROFILE_ID", "7"))
 
 SAMPLE_SIZE = int(os.getenv("LIBRARY_SAMPLE_SIZE", "120"))
-ACTOR_SEARCH_LIMIT = int(os.getenv("ACTOR_SEARCH_LIMIT", "5"))
+ACTOR_SEARCH_LIMIT = int(os.getenv("ACTOR_SEARCH_LIMIT", "15"))
 TMDB_API_KEY = os.getenv("TMDB_API_KEY", "")
 # -------------------------------------
 
