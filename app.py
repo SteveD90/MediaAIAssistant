@@ -354,6 +354,15 @@ def get_recommendations(user_request: str, media_type: str):
 
     raw = resp.choices[0].message.content.strip()
 
+    # Strip markdown code blocks if present (e.g., ```json ... ```)
+    if raw.startswith("```"):
+        # Find the first newline after opening ```
+        first_newline = raw.find("\n")
+        # Find the closing ```
+        last_backticks = raw.rfind("```")
+        if first_newline != -1 and last_backticks != -1:
+            raw = raw[first_newline + 1:last_backticks].strip()
+
     try:
         data = json.loads(raw)
         recs = data.get("recommendations", [])
