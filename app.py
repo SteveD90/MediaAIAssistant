@@ -130,12 +130,14 @@ def attach_imdb_ids(recs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     for r in recs:
         imdb_id = None
+        rating = None
         title = r.get("title")
         year = r.get("year")
         media_type = r.get("type")
 
         if not title:
             r["imdb_id"] = None
+            r["rating"] = None
             out.append(r)
             continue
 
@@ -146,14 +148,21 @@ def attach_imdb_ids(recs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 results = sonarr_get("/series/lookup", params={"term": term})
                 if results:
                     imdb_id = results[0].get("imdbId")
+                    ratings_obj = results[0].get("ratings", {})
+                    if ratings_obj:
+                        rating = ratings_obj.get("value")
             else:
                 results = radarr_get("/movie/lookup", params={"term": term})
                 if results:
                     imdb_id = results[0].get("imdbId")
+                    ratings_obj = results[0].get("ratings", {})
+                    if ratings_obj:
+                        rating = ratings_obj.get("value")
         except Exception as e:
             print("[attach_imdb_ids] lookup error for term:", term, "error:", e)
 
         r["imdb_id"] = imdb_id
+        r["rating"] = rating
         out.append(r)
 
     return out
@@ -691,11 +700,25 @@ TEMPLATE = """
  .recs-list { list-style: none; padding: 0; margin: 0; }
  .rec-meta { display: flex; flex-direction: column; gap: 0.25rem; flex: 1; }
  .add-controls { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
- .status { 
+ .status {
    margin-left: 0.5rem;
    font-weight: 600;
    min-width: 160px;
    font-size: 0.9rem;
+ }
+ .rating-badge {
+   display: inline-block;
+   background: #f5c518;
+   color: #000;
+   padding: 0.3rem 0.6rem;
+   border-radius: 6px;
+   font-size: 0.85rem;
+   font-weight: 700;
+   margin-left: 0.5rem;
+   white-space: nowrap;
+ }
+ .rating-badge::before {
+   content: "⭐ ";
  }
  .history-btn { 
    padding: 0.75rem 1.5rem;
@@ -760,7 +783,12 @@ TEMPLATE = """
 		  
         <div class="rec-meta" style="flex:1">
           <div class="type">{{ r.type|upper }}{% if r.year %} · {{ r.year }}{% endif %}</div>
-          <div class="title">{{ r.title }}</div>
+          <div class="title">
+            {{ r.title }}
+            {% if r.rating %}
+              <span class="rating-badge">{{ "%.1f"|format(r.rating) }}</span>
+            {% endif %}
+          </div>
           <div class="reason">{{ r.reason }}</div>
         </div>
 
@@ -815,7 +843,12 @@ TEMPLATE = """
           
         <div class="rec-meta" style="flex:1">
           <div class="type">{{ r.type|upper }}{% if r.year %} · {{ r.year }}{% endif %}</div>
-          <div class="title">{{ r.title }}</div>
+          <div class="title">
+            {{ r.title }}
+            {% if r.rating %}
+              <span class="rating-badge">{{ "%.1f"|format(r.rating) }}</span>
+            {% endif %}
+          </div>
           {% if r.overview %}
             <div class="reason">{{ r.overview }}</div>
           {% endif %}
@@ -992,21 +1025,27 @@ def specific_search():
                 radarr_results = radarr_get("/movie/lookup", params={"term": search_query})
 
                 for item in sonarr_results[:10]:
+                    ratings_obj = item.get("ratings", {})
+                    rating = ratings_obj.get("value") if ratings_obj else None
                     search_results.append({
                         "title": item.get("title"),
                         "year": item.get("year"),
                         "type": "tv",
                         "overview": item.get("overview", "")[:200] + "..." if item.get("overview") else "",
-                        "imdb_id": item.get("imdbId")
+                        "imdb_id": item.get("imdbId"),
+                        "rating": rating
                     })
 
                 for item in radarr_results[:10]:
+                    ratings_obj = item.get("ratings", {})
+                    rating = ratings_obj.get("value") if ratings_obj else None
                     search_results.append({
                         "title": item.get("title"),
                         "year": item.get("year"),
                         "type": "movie",
                         "overview": item.get("overview", "")[:200] + "..." if item.get("overview") else "",
-                        "imdb_id": item.get("imdbId")
+                        "imdb_id": item.get("imdbId"),
+                        "rating": rating
                     })
 
             elif search_type == "actor":
@@ -1040,23 +1079,29 @@ def specific_search():
                                 results = sonarr_get("/series/lookup", params={"term": title})
                                 if results:
                                     item = results[0]
+                                    ratings_obj = item.get("ratings", {})
+                                    rating = ratings_obj.get("value") if ratings_obj else None
                                     search_results.append({
                                         "title": item.get("title"),
                                         "year": item.get("year"),
                                         "type": "tv",
                                         "overview": item.get("overview", "")[:200] + "..." if item.get("overview") else "",
-                                        "imdb_id": item.get("imdbId")
+                                        "imdb_id": item.get("imdbId"),
+                                        "rating": rating
                                     })
                             elif media_type == "movie":
                                 results = radarr_get("/movie/lookup", params={"term": title})
                                 if results:
                                     item = results[0]
+                                    ratings_obj = item.get("ratings", {})
+                                    rating = ratings_obj.get("value") if ratings_obj else None
                                     search_results.append({
                                         "title": item.get("title"),
                                         "year": item.get("year"),
                                         "type": "movie",
                                         "overview": item.get("overview", "")[:200] + "..." if item.get("overview") else "",
-                                        "imdb_id": item.get("imdbId")
+                                        "imdb_id": item.get("imdbId"),
+                                        "rating": rating
                                     })
                         except Exception as lookup_error:
                             print(f"[specific_search] Error looking up '{title}': {lookup_error}")
@@ -1325,11 +1370,25 @@ HISTORY_TEMPLATE = """
    box-shadow: 0 4px 12px rgba(245, 197, 24, 0.4);
  }
  .add-controls { display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap; }
- .status { 
+ .status {
    margin-left: 0.5rem;
    font-weight: 600;
    min-width: 160px;
    font-size: 0.85rem;
+ }
+ .rating-badge {
+   display: inline-block;
+   background: #f5c518;
+   color: #000;
+   padding: 0.3rem 0.6rem;
+   border-radius: 6px;
+   font-size: 0.85rem;
+   font-weight: 700;
+   margin-left: 0.5rem;
+   white-space: nowrap;
+ }
+ .rating-badge::before {
+   content: "⭐ ";
  }
  .no-history { 
    text-align: center;
@@ -1378,7 +1437,12 @@ HISTORY_TEMPLATE = """
               
               <div class="rec-meta">
                 <div class="type">{{ rec.type|upper }}{% if rec.year %} · {{ rec.year }}{% endif %}</div>
-                <div class="title">{{ rec.title }}</div>
+                <div class="title">
+                  {{ rec.title }}
+                  {% if rec.rating %}
+                    <span class="rating-badge">{{ "%.1f"|format(rec.rating) }}</span>
+                  {% endif %}
+                </div>
                 <div class="reason">{{ rec.reason }}</div>
               </div>
 
