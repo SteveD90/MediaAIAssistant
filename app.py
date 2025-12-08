@@ -716,18 +716,19 @@ TEMPLATE = """
    font-size: 0.9rem;
  }
  .rating-badge {
-   display: inline-block;
+   display: inline-flex;
+   align-items: center;
    background: #f5c518;
    color: #000;
-   padding: 0.3rem 0.6rem;
+   padding: 0.25rem 0.5rem;
    border-radius: 6px;
-   font-size: 0.85rem;
+   font-size: 0.8rem;
    font-weight: 700;
-   margin-left: 0.5rem;
    white-space: nowrap;
+   gap: 0.25rem;
  }
  .rating-badge::before {
-   content: "⭐ ";
+   content: "⭐";
  }
  .history-btn { 
    padding: 0.75rem 1.5rem;
@@ -791,13 +792,13 @@ TEMPLATE = """
 		  data-type="{{ r.type }}">
 		  
         <div class="rec-meta" style="flex:1">
-          <div class="type">{{ r.type|upper }}{% if r.year %} · {{ r.year }}{% endif %}</div>
-          <div class="title">
-            {{ r.title }}
+          <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+            <div class="type">{{ r.type|upper }}{% if r.year %} · {{ r.year }}{% endif %}</div>
             {% if r.rating %}
               <span class="rating-badge">{{ "%.1f"|format(r.rating) }}</span>
             {% endif %}
           </div>
+          <div class="title">{{ r.title }}</div>
           <div class="reason">{{ r.reason }}</div>
         </div>
 
@@ -851,13 +852,13 @@ TEMPLATE = """
           data-type="{{ r.type }}">
           
         <div class="rec-meta" style="flex:1">
-          <div class="type">{{ r.type|upper }}{% if r.year %} · {{ r.year }}{% endif %}</div>
-          <div class="title">
-            {{ r.title }}
+          <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+            <div class="type">{{ r.type|upper }}{% if r.year %} · {{ r.year }}{% endif %}</div>
             {% if r.rating %}
               <span class="rating-badge">{{ "%.1f"|format(r.rating) }}</span>
             {% endif %}
           </div>
+          <div class="title">{{ r.title }}</div>
           {% if r.overview %}
             <div class="reason">{{ r.overview }}</div>
           {% endif %}
@@ -1386,18 +1387,19 @@ HISTORY_TEMPLATE = """
    font-size: 0.85rem;
  }
  .rating-badge {
-   display: inline-block;
+   display: inline-flex;
+   align-items: center;
    background: #f5c518;
    color: #000;
-   padding: 0.3rem 0.6rem;
+   padding: 0.25rem 0.5rem;
    border-radius: 6px;
-   font-size: 0.85rem;
+   font-size: 0.8rem;
    font-weight: 700;
-   margin-left: 0.5rem;
    white-space: nowrap;
+   gap: 0.25rem;
  }
  .rating-badge::before {
-   content: "⭐ ";
+   content: "⭐";
  }
  .no-history { 
    text-align: center;
@@ -1445,13 +1447,13 @@ HISTORY_TEMPLATE = """
                  data-type="{{ rec.type }}">
               
               <div class="rec-meta">
-                <div class="type">{{ rec.type|upper }}{% if rec.year %} · {{ rec.year }}{% endif %}</div>
-                <div class="title">
-                  {{ rec.title }}
+                <div style="display: flex; align-items: center; gap: 0.5rem; flex-wrap: wrap;">
+                  <div class="type">{{ rec.type|upper }}{% if rec.year %} · {{ rec.year }}{% endif %}</div>
                   {% if rec.rating %}
                     <span class="rating-badge">{{ "%.1f"|format(rec.rating) }}</span>
                   {% endif %}
                 </div>
+                <div class="title">{{ rec.title }}</div>
                 <div class="reason">{{ rec.reason }}</div>
               </div>
 
