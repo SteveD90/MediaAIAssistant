@@ -176,6 +176,24 @@ def normalize_title(title: str) -> str:
     return "".join(ch.lower() for ch in title if ch.isalnum())
 
 
+def is_talk_show(title: str) -> bool:
+    """Check if a title is likely a talk show or variety show."""
+    if not title:
+        return False
+
+    title_lower = title.lower()
+
+    # Common talk show patterns
+    talk_show_patterns = [
+        "tonight show", "late night", "late show", "jimmy kimmel", "jimmy fallon",
+        "conan", "daily show", "colbert", "saturday night live", "snl",
+        "live with", "show with", "graham norton", "ellen", "oprah",
+        "view", "talk show", "late late", "tonight starring"
+    ]
+
+    return any(pattern in title_lower for pattern in talk_show_patterns)
+
+
 def get_owned_title_sets() -> tuple[set[str], set[str]]:
     owned_tv = set()
     owned_movies = set()
@@ -320,6 +338,10 @@ def get_recommendations(user_request: str, media_type: str):
         "CRITICAL: Do NOT recommend ANY title that appears in the provided library summary. "
         "Check the title carefully against the library before recommending. "
         "Only recommend NEW titles that the user doesn't already have. "
+        "IMPORTANT: Do NOT recommend talk shows, late night shows, news programs, or variety shows. "
+        "Only recommend scripted TV series (dramas, comedies, etc.) and movies. "
+        "Avoid: Saturday Night Live, The Tonight Show, Late Night, Jimmy Kimmel, Conan, "
+        "The Daily Show, talk shows, news shows, and similar programs. "
         "Return your answer strictly as JSON with this shape:\n"
         '{ "recommendations": ['
         '{ "type": "tv or movie", "title": "string", "year": 2020, "reason": "string" } ] }\n'
@@ -383,18 +405,24 @@ def get_recommendations(user_request: str, media_type: str):
         print(f"[Filter] Owned TV shows: {len(owned_tv)}, Owned movies: {len(owned_movies)}")
 
         for r in recs:
-            title_norm = normalize_title(r.get("title", ""))
+            title = r.get("title", "")
+            title_norm = normalize_title(title)
             if not title_norm:
                 continue
-            
+
+            # Check if it's a talk show
+            if is_talk_show(title):
+                print(f"[Filter] Skipping talk show: {title}")
+                continue
+
             is_duplicate = False
             if r["type"] == "tv" and title_norm in owned_tv:
-                print(f"[Filter] Skipping TV show already in library: {r.get('title')}")
+                print(f"[Filter] Skipping TV show already in library: {title}")
                 is_duplicate = True
             if r["type"] == "movie" and title_norm in owned_movies:
-                print(f"[Filter] Skipping movie already in library: {r.get('title')}")
+                print(f"[Filter] Skipping movie already in library: {title}")
                 is_duplicate = True
-            
+
             if not is_duplicate:
                 filtered.append(r)
 
