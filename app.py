@@ -37,6 +37,7 @@ RADARR_QUALITY_PROFILE_ID = int(os.getenv("RADARR_QUALITY_PROFILE_ID", "7"))
 
 SAMPLE_SIZE = int(os.getenv("LIBRARY_SAMPLE_SIZE", "120"))
 ACTOR_SEARCH_LIMIT = int(os.getenv("ACTOR_SEARCH_LIMIT", "5"))
+TMDB_API_KEY = os.getenv("TMDB_API_KEY", "")
 # -------------------------------------
 
 client = OpenAI(api_key=OPENAI_API_KEY)
@@ -189,6 +190,85 @@ def get_owned_title_sets() -> tuple[set[str], set[str]]:
         print("Error fetching full Radarr library for owned titles:", e)
 
     return owned_tv, owned_movies
+
+
+# ---------- TMDB API HELPERS ----------
+def tmdb_search_person(name: str):
+    """Search TMDB for a person by name."""
+    if not TMDB_API_KEY:
+        print("[TMDB] No API key configured")
+        return None
+
+    url = "https://api.themoviedb.org/3/search/person"
+    params = {
+        "api_key": TMDB_API_KEY,
+        "query": name,
+        "page": 1
+    }
+
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        results = data.get("results", [])
+
+        if results:
+            # Return the most popular match
+            return sorted(results, key=lambda x: x.get("popularity", 0), reverse=True)[0]
+        return None
+    except Exception as e:
+        print(f"[TMDB] Person search error: {e}")
+        return None
+
+
+def tmdb_get_person_credits(person_id: int, limit: int = 10):
+    """Get movies and TV shows for a person from TMDB."""
+    if not TMDB_API_KEY:
+        return []
+
+    url = f"https://api.themoviedb.org/3/person/{person_id}/combined_credits"
+    params = {"api_key": TMDB_API_KEY}
+
+    try:
+        r = requests.get(url, params=params, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+
+        # Get both cast and crew credits
+        credits = data.get("cast", [])
+
+        # Sort by popularity and release date
+        credits = sorted(
+            credits,
+            key=lambda x: (x.get("popularity", 0), x.get("release_date", "") or x.get("first_air_date", "")),
+            reverse=True
+        )
+
+        # Convert to our format
+        results = []
+        for credit in credits[:limit]:
+            media_type = credit.get("media_type")
+            if media_type == "movie":
+                title = credit.get("title", "")
+                year = credit.get("release_date", "")[:4] if credit.get("release_date") else None
+                results.append({
+                    "title": title,
+                    "year": int(year) if year and year.isdigit() else None,
+                    "type": "movie"
+                })
+            elif media_type == "tv":
+                title = credit.get("name", "")
+                year = credit.get("first_air_date", "")[:4] if credit.get("first_air_date") else None
+                results.append({
+                    "title": title,
+                    "year": int(year) if year and year.isdigit() else None,
+                    "type": "tv"
+                })
+
+        return results
+    except Exception as e:
+        print(f"[TMDB] Credits error: {e}")
+        return []
 
 
 # ---------- OPENAI CALL ----------
@@ -900,61 +980,58 @@ def specific_search():
                     })
 
             elif search_type == "actor":
-                print(f"[specific_search] Searching for actor: {search_query}")
+                print(f"[specific_search] Searching for actor via TMDB: {search_query}")
 
-                prompt = f"""List the {ACTOR_SEARCH_LIMIT} most popular and well-known movies and TV shows where {search_query} is a main cast member or has a significant role.
+                # Use TMDB to find the actor
+                person = tmdb_search_person(search_query)
 
-IMPORTANT: Only include titles where {search_query} actually appears as an actor. Do not make up titles.
+                if not person:
+                    flash(f"Could not find actor '{search_query}' in TMDB", "error")
+                else:
+                    person_name = person.get("name")
+                    person_id = person.get("id")
+                    print(f"[specific_search] Found person: {person_name} (ID: {person_id})")
 
-Format each as: 'Title (Year)' one per line.
-Example format:
-30 Rock (2006)
-The Longest Yard (2005)
+                    # Get their filmography from TMDB
+                    tmdb_credits = tmdb_get_person_credits(person_id, limit=ACTOR_SEARCH_LIMIT)
+                    print(f"[specific_search] Found {len(tmdb_credits)} credits from TMDB")
 
-Only the titles, nothing else."""
+                    # Look up each title in Sonarr/Radarr to get full metadata
+                    for credit in tmdb_credits:
+                        title = credit.get("title")
+                        year = credit.get("year")
+                        media_type = credit.get("type")
 
-                req_kwargs = {
-                    "model": MODEL_NAME,
-                    "messages": [{"role": "user", "content": prompt}],
-                }
+                        if not title:
+                            continue
 
-                # Temperature parameter removed - not supported by all models (e.g., gpt-5-nano)
-
-                response = client.chat.completions.create(**req_kwargs)
-
-                titles_text = response.choices[0].message.content.strip()
-                print(f"[specific_search] AI suggested titles: {titles_text}")
-
-                for line in titles_text.split('\n')[:ACTOR_SEARCH_LIMIT]:
-                    title = line.split('(')[0].strip()
-                    if title:
                         try:
-                            sonarr_results = sonarr_get("/series/lookup", params={"term": title})
-                            radarr_results = radarr_get("/movie/lookup", params={"term": title})
-
-                            if sonarr_results:
-                                item = sonarr_results[0]
-                                search_results.append({
-                                    "title": item.get("title"),
-                                    "year": item.get("year"),
-                                    "type": "tv",
-                                    "overview": item.get("overview", "")[:200] + "..." if item.get("overview") else "",
-                                    "imdb_id": item.get("imdbId")
-                                })
-
-                            if radarr_results:
-                                item = radarr_results[0]
-                                search_results.append({
-                                    "title": item.get("title"),
-                                    "year": item.get("year"),
-                                    "type": "movie",
-                                    "overview": item.get("overview", "")[:200] + "..." if item.get("overview") else "",
-                                    "imdb_id": item.get("imdbId")
-                                })
+                            if media_type == "tv":
+                                results = sonarr_get("/series/lookup", params={"term": title})
+                                if results:
+                                    item = results[0]
+                                    search_results.append({
+                                        "title": item.get("title"),
+                                        "year": item.get("year"),
+                                        "type": "tv",
+                                        "overview": item.get("overview", "")[:200] + "..." if item.get("overview") else "",
+                                        "imdb_id": item.get("imdbId")
+                                    })
+                            elif media_type == "movie":
+                                results = radarr_get("/movie/lookup", params={"term": title})
+                                if results:
+                                    item = results[0]
+                                    search_results.append({
+                                        "title": item.get("title"),
+                                        "year": item.get("year"),
+                                        "type": "movie",
+                                        "overview": item.get("overview", "")[:200] + "..." if item.get("overview") else "",
+                                        "imdb_id": item.get("imdbId")
+                                    })
                         except Exception as lookup_error:
                             print(f"[specific_search] Error looking up '{title}': {lookup_error}")
 
-                flash(f"Found {len(search_results)} titles featuring {search_query}", "success")
+                    flash(f"Found {len(search_results)} titles featuring {person_name}", "success")
 
         except Exception as e:
             print(f"[specific_search] Error: {e}")

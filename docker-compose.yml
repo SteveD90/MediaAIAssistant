@@ -10,6 +10,13 @@ services:
       OPENAI_API_KEY: "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"
       OPENAI_MODEL_NAME: "gpt-5-nano"
 
+      # TMDB API for accurate actor searches (get free key at https://www.themoviedb.org/settings/api)
+      TMDB_API_KEY: "your-tmdb-api-key-here"
+
+      # Performance settings
+      LIBRARY_SAMPLE_SIZE: "50"
+      ACTOR_SEARCH_LIMIT: "5"
+
       # Use your NAS IP + ports here:
       SONARR_URL: "http://10.0.0.8:8989"
       SONARR_API_KEY: "ae84bbe28f2f4a53b2ddedbcf6bbc9e3"
@@ -25,5 +32,4 @@ services:
       RADARR_ROOT_FOLDER: "/media/movies"
       RADARR_QUALITY_PROFILE_ID: "7"
 
-      LIBRARY_SAMPLE_SIZE: "50"
       FLASK_SECRET_KEY: "some-random-string"
