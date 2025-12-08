@@ -150,20 +150,20 @@ def attach_imdb_ids(recs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                     imdb_id = results[0].get("imdbId")
                     ratings_obj = results[0].get("ratings")
                     if ratings_obj and isinstance(ratings_obj, dict):
-                        rating = ratings_obj.get("value")
-                        print(f"[attach_imdb_ids] TV '{title}': rating={rating}, ratings_obj={ratings_obj}")
-                    else:
-                        print(f"[attach_imdb_ids] TV '{title}': No ratings object (got {type(ratings_obj)})")
+                        # Rating is nested: ratings.imdb.value
+                        imdb_rating = ratings_obj.get("imdb", {})
+                        if isinstance(imdb_rating, dict):
+                            rating = imdb_rating.get("value")
             else:
                 results = radarr_get("/movie/lookup", params={"term": term})
                 if results:
                     imdb_id = results[0].get("imdbId")
                     ratings_obj = results[0].get("ratings")
                     if ratings_obj and isinstance(ratings_obj, dict):
-                        rating = ratings_obj.get("value")
-                        print(f"[attach_imdb_ids] Movie '{title}': rating={rating}, ratings_obj={ratings_obj}")
-                    else:
-                        print(f"[attach_imdb_ids] Movie '{title}': No ratings object (got {type(ratings_obj)})")
+                        # Rating is nested: ratings.imdb.value
+                        imdb_rating = ratings_obj.get("imdb", {})
+                        if isinstance(imdb_rating, dict):
+                            rating = imdb_rating.get("value")
         except Exception as e:
             print("[attach_imdb_ids] lookup error for term:", term, "error:", e)
 
@@ -1070,7 +1070,11 @@ def specific_search():
 
                 for item in sonarr_results[:10]:
                     ratings_obj = item.get("ratings", {})
-                    rating = ratings_obj.get("value") if ratings_obj else None
+                    rating = None
+                    if ratings_obj and isinstance(ratings_obj, dict):
+                        imdb_rating = ratings_obj.get("imdb", {})
+                        if isinstance(imdb_rating, dict):
+                            rating = imdb_rating.get("value")
                     search_results.append({
                         "title": item.get("title"),
                         "year": item.get("year"),
@@ -1082,7 +1086,11 @@ def specific_search():
 
                 for item in radarr_results[:10]:
                     ratings_obj = item.get("ratings", {})
-                    rating = ratings_obj.get("value") if ratings_obj else None
+                    rating = None
+                    if ratings_obj and isinstance(ratings_obj, dict):
+                        imdb_rating = ratings_obj.get("imdb", {})
+                        if isinstance(imdb_rating, dict):
+                            rating = imdb_rating.get("value")
                     search_results.append({
                         "title": item.get("title"),
                         "year": item.get("year"),
@@ -1124,7 +1132,11 @@ def specific_search():
                                 if results:
                                     item = results[0]
                                     ratings_obj = item.get("ratings", {})
-                                    rating = ratings_obj.get("value") if ratings_obj else None
+                                    rating = None
+                                    if ratings_obj and isinstance(ratings_obj, dict):
+                                        imdb_rating = ratings_obj.get("imdb", {})
+                                        if isinstance(imdb_rating, dict):
+                                            rating = imdb_rating.get("value")
                                     search_results.append({
                                         "title": item.get("title"),
                                         "year": item.get("year"),
@@ -1138,7 +1150,11 @@ def specific_search():
                                 if results:
                                     item = results[0]
                                     ratings_obj = item.get("ratings", {})
-                                    rating = ratings_obj.get("value") if ratings_obj else None
+                                    rating = None
+                                    if ratings_obj and isinstance(ratings_obj, dict):
+                                        imdb_rating = ratings_obj.get("imdb", {})
+                                        if isinstance(imdb_rating, dict):
+                                            rating = imdb_rating.get("value")
                                     search_results.append({
                                         "title": item.get("title"),
                                         "year": item.get("year"),
