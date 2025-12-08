@@ -229,24 +229,50 @@ def tmdb_get_person_credits(person_id: int, limit: int = 10):
     url = f"https://api.themoviedb.org/3/person/{person_id}/combined_credits"
     params = {"api_key": TMDB_API_KEY}
 
+    # Talk show and news genres to exclude
+    EXCLUDE_GENRES = {"Talk", "News", "Reality", "Documentary"}
+
     try:
         r = requests.get(url, params=params, timeout=10)
         r.raise_for_status()
         data = r.json()
 
-        # Get both cast and crew credits
+        # Get only cast credits (not crew)
         credits = data.get("cast", [])
 
+        # Filter out talk shows, news, and guest appearances
+        filtered_credits = []
+        for credit in credits:
+            # Skip if no character name (usually means guest appearance)
+            if not credit.get("character"):
+                continue
+
+            # For TV shows, check genre and episode count
+            if credit.get("media_type") == "tv":
+                # Filter out talk shows, news, reality by name patterns
+                title = credit.get("name", "").lower()
+                if any(word in title for word in ["tonight show", "late night", "late show", "jimmy kimmel",
+                                                    "daily show", "show with", "live with", "graham norton",
+                                                    "running man", "conan"]):
+                    continue
+
+                # Only include if they have multiple episodes (not just a guest)
+                episode_count = credit.get("episode_count", 0)
+                if episode_count < 3:
+                    continue
+
+            filtered_credits.append(credit)
+
         # Sort by popularity and release date
-        credits = sorted(
-            credits,
-            key=lambda x: (x.get("popularity", 0), x.get("release_date", "") or x.get("first_air_date", "")),
+        filtered_credits = sorted(
+            filtered_credits,
+            key=lambda x: (x.get("popularity", 0), x.get("vote_count", 0)),
             reverse=True
         )
 
         # Convert to our format
         results = []
-        for credit in credits[:limit]:
+        for credit in filtered_credits[:limit * 2]:  # Get more to account for filtering
             media_type = credit.get("media_type")
             if media_type == "movie":
                 title = credit.get("title", "")
@@ -264,6 +290,10 @@ def tmdb_get_person_credits(person_id: int, limit: int = 10):
                     "year": int(year) if year and year.isdigit() else None,
                     "type": "tv"
                 })
+
+            # Stop once we have enough results
+            if len(results) >= limit:
+                break
 
         return results
     except Exception as e:
