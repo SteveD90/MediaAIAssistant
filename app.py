@@ -4,7 +4,7 @@ import json
 from typing import List, Dict, Any, Optional, Tuple
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from functools import lru_cache
+from threading import Lock
 import time
 
 import requests
@@ -49,12 +49,14 @@ app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me")
 
 # History storage (in-memory, will reset on restart)
 history = []
+_history_lock = Lock()
 
 # Simple cache with expiry
 _library_cache = {
     "sonarr": {"data": None, "timestamp": 0},
     "radarr": {"data": None, "timestamp": 0},
 }
+_cache_lock = Lock()
 CACHE_TTL_SECONDS = 300  # 5 minutes
 
 
@@ -94,16 +96,29 @@ def radarr_post(path: str, data: Dict[str, Any]):
 
 # ---------- LIBRARY SAMPLING ----------
 def fetch_sonarr_sample(use_cache: bool = True) -> List[Dict[str, Any]]:
-    """Fetch Sonarr series list with optional caching."""
+    """Fetch Sonarr series list with optional caching.
+    
+    Args:
+        use_cache: Whether to use cached data if available (default: True)
+        
+    Returns:
+        List of dictionaries containing sampled TV show metadata
+    """
     try:
         # Check cache
         if use_cache:
-            cached = _library_cache["sonarr"]
-            if cached["data"] is not None and (time.time() - cached["timestamp"]) < CACHE_TTL_SECONDS:
-                series = cached["data"]
-            else:
+            with _cache_lock:
+                cached = _library_cache["sonarr"]
+                if cached["data"] is not None and (time.time() - cached["timestamp"]) < CACHE_TTL_SECONDS:
+                    series = cached["data"]
+                else:
+                    series = None
+            
+            # Fetch outside lock if cache miss
+            if series is None:
                 series = sonarr_get("/series")
-                _library_cache["sonarr"] = {"data": series, "timestamp": time.time()}
+                with _cache_lock:
+                    _library_cache["sonarr"] = {"data": series, "timestamp": time.time()}
         else:
             series = sonarr_get("/series")
     except Exception as e:
@@ -122,16 +137,29 @@ def fetch_sonarr_sample(use_cache: bool = True) -> List[Dict[str, Any]]:
 
 
 def fetch_radarr_sample(use_cache: bool = True) -> List[Dict[str, Any]]:
-    """Fetch Radarr movies list with optional caching."""
+    """Fetch Radarr movies list with optional caching.
+    
+    Args:
+        use_cache: Whether to use cached data if available (default: True)
+        
+    Returns:
+        List of dictionaries containing sampled movie metadata
+    """
     try:
         # Check cache
         if use_cache:
-            cached = _library_cache["radarr"]
-            if cached["data"] is not None and (time.time() - cached["timestamp"]) < CACHE_TTL_SECONDS:
-                movies = cached["data"]
-            else:
+            with _cache_lock:
+                cached = _library_cache["radarr"]
+                if cached["data"] is not None and (time.time() - cached["timestamp"]) < CACHE_TTL_SECONDS:
+                    movies = cached["data"]
+                else:
+                    movies = None
+            
+            # Fetch outside lock if cache miss
+            if movies is None:
                 movies = radarr_get("/movie")
-                _library_cache["radarr"] = {"data": movies, "timestamp": time.time()}
+                with _cache_lock:
+                    _library_cache["radarr"] = {"data": movies, "timestamp": time.time()}
         else:
             movies = radarr_get("/movie")
     except Exception as e:
@@ -156,7 +184,14 @@ def build_library_summary() -> Dict[str, Any]:
 
 
 def extract_rating(ratings_obj: Any) -> Optional[float]:
-    """Helper function to extract IMDb rating from nested ratings object."""
+    """Extract IMDb rating from nested ratings object.
+    
+    Args:
+        ratings_obj: Ratings dictionary from Sonarr/Radarr API response
+        
+    Returns:
+        IMDb rating value if found, None otherwise
+    """
     if ratings_obj and isinstance(ratings_obj, dict):
         imdb_rating = ratings_obj.get("imdb", {})
         if isinstance(imdb_rating, dict):
@@ -165,7 +200,14 @@ def extract_rating(ratings_obj: Any) -> Optional[float]:
 
 
 def attach_imdb_ids(recs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Attach IMDb IDs and ratings to recommendations using concurrent API calls."""
+    """Attach IMDb IDs and ratings to recommendations using concurrent API calls.
+    
+    Args:
+        recs: List of recommendation dictionaries
+        
+    Returns:
+        List of recommendations with added 'imdb_id' and 'rating' fields
+    """
     
     def lookup_single_rec(r: Dict[str, Any]) -> Dict[str, Any]:
         """Lookup a single recommendation's IMDb ID and rating."""
@@ -196,12 +238,13 @@ def attach_imdb_ids(recs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
         return {**r, "imdb_id": imdb_id, "rating": rating}
     
-    # Use ThreadPoolExecutor for concurrent lookups
+    # Use ThreadPoolExecutor for concurrent lookups with timeout
     with ThreadPoolExecutor(max_workers=5) as executor:
         future_to_rec = {executor.submit(lookup_single_rec, rec): i for i, rec in enumerate(recs)}
         results = [None] * len(recs)
         
-        for future in as_completed(future_to_rec):
+        # Add timeout of 60 seconds per lookup
+        for future in as_completed(future_to_rec, timeout=60):
             idx = future_to_rec[future]
             try:
                 results[idx] = future.result()
@@ -216,10 +259,16 @@ def attach_imdb_ids(recs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 # -------------------------------------
 
 def normalize_title(title: str) -> str:
-    """Normalize title by removing non-alphanumeric chars and converting to lowercase."""
+    """Normalize title for comparison by removing non-alphanumeric chars and lowercasing.
+    
+    Args:
+        title: Title string to normalize
+        
+    Returns:
+        Normalized title with only lowercase alphanumeric characters
+    """
     if not title:
         return ""
-    # More efficient: use filter instead of generator expression
     return "".join(filter(str.isalnum, title.lower()))
 
 
@@ -241,19 +290,29 @@ def is_talk_show(title: str) -> bool:
     return any(pattern in title_lower for pattern in talk_show_patterns)
 
 
-def get_owned_title_sets() -> tuple[set[str], set[str]]:
-    """Get sets of owned TV shows and movies using cached library data."""
+def get_owned_title_sets() -> Tuple[set[str], set[str]]:
+    """Get sets of owned TV shows and movies using cached library data.
+    
+    Returns:
+        Tuple of (owned_tv_titles, owned_movie_titles) as normalized title sets
+    """
     owned_tv = set()
     owned_movies = set()
 
     # Reuse cached library data if available
     try:
-        cached_sonarr = _library_cache["sonarr"]
-        if cached_sonarr["data"] is not None and (time.time() - cached_sonarr["timestamp"]) < CACHE_TTL_SECONDS:
-            series = cached_sonarr["data"]
-        else:
+        with _cache_lock:
+            cached_sonarr = _library_cache["sonarr"]
+            if cached_sonarr["data"] is not None and (time.time() - cached_sonarr["timestamp"]) < CACHE_TTL_SECONDS:
+                series = cached_sonarr["data"]
+            else:
+                series = None
+        
+        # Fetch outside lock if cache miss
+        if series is None:
             series = sonarr_get("/series")
-            _library_cache["sonarr"] = {"data": series, "timestamp": time.time()}
+            with _cache_lock:
+                _library_cache["sonarr"] = {"data": series, "timestamp": time.time()}
         
         for s in series:
             t = normalize_title(s.get("title", ""))
@@ -263,12 +322,18 @@ def get_owned_title_sets() -> tuple[set[str], set[str]]:
         print("Error fetching full Sonarr library for owned titles:", e)
 
     try:
-        cached_radarr = _library_cache["radarr"]
-        if cached_radarr["data"] is not None and (time.time() - cached_radarr["timestamp"]) < CACHE_TTL_SECONDS:
-            movies = cached_radarr["data"]
-        else:
+        with _cache_lock:
+            cached_radarr = _library_cache["radarr"]
+            if cached_radarr["data"] is not None and (time.time() - cached_radarr["timestamp"]) < CACHE_TTL_SECONDS:
+                movies = cached_radarr["data"]
+            else:
+                movies = None
+        
+        # Fetch outside lock if cache miss
+        if movies is None:
             movies = radarr_get("/movie")
-            _library_cache["radarr"] = {"data": movies, "timestamp": time.time()}
+            with _cache_lock:
+                _library_cache["radarr"] = {"data": movies, "timestamp": time.time()}
         
         for m in movies:
             t = normalize_title(m.get("title", ""))
@@ -1090,13 +1155,14 @@ def index():
             if not recs:
                 flash("No recommendations returned. Check logs.", "error")
             else:
-                # Save to history
-                history.insert(0, {
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "request": request_text,
-                    "media_type": media_type,
-                    "recommendations": recs
-                })
+                # Save to history (thread-safe)
+                with _history_lock:
+                    history.insert(0, {
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "request": request_text,
+                        "media_type": media_type,
+                        "recommendations": recs
+                    })
 
     return render_template_string(
         TEMPLATE,
@@ -1204,11 +1270,12 @@ def specific_search():
                         
                         return None
 
-                    # Use ThreadPoolExecutor for concurrent lookups
+                    # Use ThreadPoolExecutor for concurrent lookups with timeout
                     with ThreadPoolExecutor(max_workers=5) as executor:
                         futures = [executor.submit(lookup_credit, credit) for credit in tmdb_credits]
                         
-                        for future in as_completed(futures):
+                        # Add timeout of 60 seconds per lookup
+                        for future in as_completed(futures, timeout=60):
                             try:
                                 result = future.result()
                                 if result:
@@ -1661,10 +1728,21 @@ def history_page():
 
 @app.route("/history/clear", methods=["POST"])
 def clear_history():
-    global history
-    history = []
+    """Clear search history."""
+    with _history_lock:
+        history.clear()
     flash("History cleared successfully.", "success")
     return redirect(url_for("history_page"))
+
+
+@app.route("/cache/clear", methods=["POST"])
+def clear_cache():
+    """Clear library cache to force fresh data fetch."""
+    with _cache_lock:
+        _library_cache["sonarr"] = {"data": None, "timestamp": 0}
+        _library_cache["radarr"] = {"data": None, "timestamp": 0}
+    flash("Cache cleared successfully.", "success")
+    return redirect(url_for("index"))
 
 
 if __name__ == "__main__":
