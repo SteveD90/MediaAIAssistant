@@ -176,9 +176,7 @@ def attach_imdb_ids(recs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         media_type = r.get("type")
 
         if not title:
-            r["imdb_id"] = None
-            r["rating"] = None
-            return r
+            return {**r, "imdb_id": None, "rating": None}
 
         term = f"{title} ({year})" if year else title
 
@@ -196,13 +194,11 @@ def attach_imdb_ids(recs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         except Exception as e:
             print("[attach_imdb_ids] lookup error for term:", term, "error:", e)
 
-        r["imdb_id"] = imdb_id
-        r["rating"] = rating
-        return r
+        return {**r, "imdb_id": imdb_id, "rating": rating}
     
     # Use ThreadPoolExecutor for concurrent lookups
     with ThreadPoolExecutor(max_workers=5) as executor:
-        future_to_rec = {executor.submit(lookup_single_rec, r.copy()): i for i, r in enumerate(recs)}
+        future_to_rec = {executor.submit(lookup_single_rec, rec): i for i, rec in enumerate(recs)}
         results = [None] * len(recs)
         
         for future in as_completed(future_to_rec):
@@ -211,9 +207,8 @@ def attach_imdb_ids(recs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 results[idx] = future.result()
             except Exception as e:
                 print(f"[attach_imdb_ids] Error processing recommendation: {e}")
-                results[idx] = recs[idx]
-                results[idx]["imdb_id"] = None
-                results[idx]["rating"] = None
+                # Return original rec with None values on error
+                results[idx] = {**recs[idx], "imdb_id": None, "rating": None}
     
     return results
 
@@ -224,7 +219,7 @@ def normalize_title(title: str) -> str:
     """Normalize title by removing non-alphanumeric chars and converting to lowercase."""
     if not title:
         return ""
-    # More efficient: use filter and join instead of list comprehension with += in loop
+    # More efficient: use filter instead of generator expression
     return "".join(filter(str.isalnum, title.lower()))
 
 
