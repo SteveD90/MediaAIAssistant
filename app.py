@@ -1,8 +1,11 @@
 # (Replace your existing app.py with this file)
 import os
 import json
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional, Tuple, Set
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError
+from threading import Lock
+import time
 
 import requests
 from flask import (
@@ -46,6 +49,15 @@ app.secret_key = os.getenv("FLASK_SECRET_KEY", "change-me")
 
 # History storage (in-memory, will reset on restart)
 history = []
+_history_lock = Lock()
+
+# Simple cache with expiry
+_library_cache = {
+    "sonarr": {"data": None, "timestamp": 0},
+    "radarr": {"data": None, "timestamp": 0},
+}
+_cache_lock = Lock()
+CACHE_TTL_SECONDS = 300  # 5 minutes
 
 
 # ---------- *ARR API HELPERS ----------
@@ -83,9 +95,32 @@ def radarr_post(path: str, data: Dict[str, Any]):
 
 
 # ---------- LIBRARY SAMPLING ----------
-def fetch_sonarr_sample() -> List[Dict[str, Any]]:
+def fetch_sonarr_sample(use_cache: bool = True) -> List[Dict[str, Any]]:
+    """Fetch Sonarr series list with optional caching.
+    
+    Args:
+        use_cache: Whether to use cached data if available (default: True)
+        
+    Returns:
+        List of dictionaries containing sampled TV show metadata
+    """
     try:
-        series = sonarr_get("/series")
+        # Check cache
+        if use_cache:
+            with _cache_lock:
+                cached = _library_cache["sonarr"]
+                if cached["data"] is not None and (time.time() - cached["timestamp"]) < CACHE_TTL_SECONDS:
+                    series = cached["data"]
+                else:
+                    series = None
+            
+            # Fetch outside lock if cache miss
+            if series is None:
+                series = sonarr_get("/series")
+                with _cache_lock:
+                    _library_cache["sonarr"] = {"data": series, "timestamp": time.time()}
+        else:
+            series = sonarr_get("/series")
     except Exception as e:
         print("Sonarr error:", e)
         return []
@@ -101,9 +136,32 @@ def fetch_sonarr_sample() -> List[Dict[str, Any]]:
     ]
 
 
-def fetch_radarr_sample() -> List[Dict[str, Any]]:
+def fetch_radarr_sample(use_cache: bool = True) -> List[Dict[str, Any]]:
+    """Fetch Radarr movies list with optional caching.
+    
+    Args:
+        use_cache: Whether to use cached data if available (default: True)
+        
+    Returns:
+        List of dictionaries containing sampled movie metadata
+    """
     try:
-        movies = radarr_get("/movie")
+        # Check cache
+        if use_cache:
+            with _cache_lock:
+                cached = _library_cache["radarr"]
+                if cached["data"] is not None and (time.time() - cached["timestamp"]) < CACHE_TTL_SECONDS:
+                    movies = cached["data"]
+                else:
+                    movies = None
+            
+            # Fetch outside lock if cache miss
+            if movies is None:
+                movies = radarr_get("/movie")
+                with _cache_lock:
+                    _library_cache["radarr"] = {"data": movies, "timestamp": time.time()}
+        else:
+            movies = radarr_get("/movie")
     except Exception as e:
         print("Radarr error:", e)
         return []
@@ -125,10 +183,34 @@ def build_library_summary() -> Dict[str, Any]:
     }
 
 
-def attach_imdb_ids(recs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def extract_rating(ratings_obj: Any) -> Optional[float]:
+    """Extract IMDb rating from nested ratings object.
+    
+    Args:
+        ratings_obj: Ratings dictionary from Sonarr/Radarr API response
+        
+    Returns:
+        IMDb rating value if found, None otherwise
+    """
+    if ratings_obj and isinstance(ratings_obj, dict):
+        imdb_rating = ratings_obj.get("imdb", {})
+        if isinstance(imdb_rating, dict):
+            return imdb_rating.get("value")
+    return None
 
-    for r in recs:
+
+def attach_imdb_ids(recs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Attach IMDb IDs and ratings to recommendations using concurrent API calls.
+    
+    Args:
+        recs: List of recommendation dictionaries
+        
+    Returns:
+        List of recommendations with added 'imdb_id' and 'rating' fields
+    """
+    
+    def lookup_single_rec(r: Dict[str, Any]) -> Dict[str, Any]:
+        """Lookup a single recommendation's IMDb ID and rating."""
         imdb_id = None
         rating = None
         title = r.get("title")
@@ -136,10 +218,7 @@ def attach_imdb_ids(recs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         media_type = r.get("type")
 
         if not title:
-            r["imdb_id"] = None
-            r["rating"] = None
-            out.append(r)
-            continue
+            return {**r, "imdb_id": None, "rating": None}
 
         term = f"{title} ({year})" if year else title
 
@@ -148,38 +227,53 @@ def attach_imdb_ids(recs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 results = sonarr_get("/series/lookup", params={"term": term})
                 if results:
                     imdb_id = results[0].get("imdbId")
-                    ratings_obj = results[0].get("ratings")
-                    if ratings_obj and isinstance(ratings_obj, dict):
-                        # Rating is nested: ratings.imdb.value
-                        imdb_rating = ratings_obj.get("imdb", {})
-                        if isinstance(imdb_rating, dict):
-                            rating = imdb_rating.get("value")
+                    rating = extract_rating(results[0].get("ratings"))
             else:
                 results = radarr_get("/movie/lookup", params={"term": term})
                 if results:
                     imdb_id = results[0].get("imdbId")
-                    ratings_obj = results[0].get("ratings")
-                    if ratings_obj and isinstance(ratings_obj, dict):
-                        # Rating is nested: ratings.imdb.value
-                        imdb_rating = ratings_obj.get("imdb", {})
-                        if isinstance(imdb_rating, dict):
-                            rating = imdb_rating.get("value")
+                    rating = extract_rating(results[0].get("ratings"))
         except Exception as e:
             print("[attach_imdb_ids] lookup error for term:", term, "error:", e)
 
-        r["imdb_id"] = imdb_id
-        r["rating"] = rating
-        out.append(r)
-
-    return out
+        return {**r, "imdb_id": imdb_id, "rating": rating}
+    
+    # Use ThreadPoolExecutor for concurrent lookups with per-future timeout
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        future_to_rec = {executor.submit(lookup_single_rec, rec): i for i, rec in enumerate(recs)}
+        results = [None] * len(recs)
+        
+        # Process futures as they complete with per-future timeout
+        for future in as_completed(future_to_rec):
+            idx = future_to_rec[future]
+            try:
+                # 60 second timeout per individual future
+                results[idx] = future.result(timeout=60)
+            except TimeoutError:
+                print(f"[attach_imdb_ids] Timeout processing recommendation at index {idx}")
+                results[idx] = {**recs[idx], "imdb_id": None, "rating": None}
+            except Exception as e:
+                print(f"[attach_imdb_ids] Error processing recommendation: {e}")
+                # Return original rec with None values on error
+                results[idx] = {**recs[idx], "imdb_id": None, "rating": None}
+    
+    return results
 
 
 # -------------------------------------
 
 def normalize_title(title: str) -> str:
+    """Normalize title for comparison by removing non-alphanumeric chars and lowercasing.
+    
+    Args:
+        title: Title string to normalize
+        
+    Returns:
+        Normalized title with only lowercase alphanumeric characters
+    """
     if not title:
         return ""
-    return "".join(ch.lower() for ch in title if ch.isalnum())
+    return "".join(filter(str.isalnum, title.lower()))
 
 
 def is_talk_show(title: str) -> bool:
@@ -200,12 +294,30 @@ def is_talk_show(title: str) -> bool:
     return any(pattern in title_lower for pattern in talk_show_patterns)
 
 
-def get_owned_title_sets() -> tuple[set[str], set[str]]:
-    owned_tv = set()
-    owned_movies = set()
+def get_owned_title_sets() -> Tuple[Set[str], Set[str]]:
+    """Get sets of owned TV shows and movies using cached library data.
+    
+    Returns:
+        Tuple of (owned_tv_titles, owned_movie_titles) as normalized title sets
+    """
+    owned_tv: Set[str] = set()
+    owned_movies: Set[str] = set()
 
+    # Reuse cached library data if available
     try:
-        series = sonarr_get("/series")
+        with _cache_lock:
+            cached_sonarr = _library_cache["sonarr"]
+            if cached_sonarr["data"] is not None and (time.time() - cached_sonarr["timestamp"]) < CACHE_TTL_SECONDS:
+                series = cached_sonarr["data"]
+            else:
+                series = None
+        
+        # Fetch outside lock if cache miss
+        if series is None:
+            series = sonarr_get("/series")
+            with _cache_lock:
+                _library_cache["sonarr"] = {"data": series, "timestamp": time.time()}
+        
         for s in series:
             t = normalize_title(s.get("title", ""))
             if t:
@@ -214,7 +326,19 @@ def get_owned_title_sets() -> tuple[set[str], set[str]]:
         print("Error fetching full Sonarr library for owned titles:", e)
 
     try:
-        movies = radarr_get("/movie")
+        with _cache_lock:
+            cached_radarr = _library_cache["radarr"]
+            if cached_radarr["data"] is not None and (time.time() - cached_radarr["timestamp"]) < CACHE_TTL_SECONDS:
+                movies = cached_radarr["data"]
+            else:
+                movies = None
+        
+        # Fetch outside lock if cache miss
+        if movies is None:
+            movies = radarr_get("/movie")
+            with _cache_lock:
+                _library_cache["radarr"] = {"data": movies, "timestamp": time.time()}
+        
         for m in movies:
             t = normalize_title(m.get("title", ""))
             if t:
@@ -1035,13 +1159,14 @@ def index():
             if not recs:
                 flash("No recommendations returned. Check logs.", "error")
             else:
-                # Save to history
-                history.insert(0, {
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "request": request_text,
-                    "media_type": media_type,
-                    "recommendations": recs
-                })
+                # Save to history (thread-safe)
+                with _history_lock:
+                    history.insert(0, {
+                        "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                        "request": request_text,
+                        "media_type": media_type,
+                        "recommendations": recs
+                    })
 
     return render_template_string(
         TEMPLATE,
@@ -1065,39 +1190,32 @@ def specific_search():
     else:
         try:
             if search_type == "title":
-                sonarr_results = sonarr_get("/series/lookup", params={"term": search_query})
-                radarr_results = radarr_get("/movie/lookup", params={"term": search_query})
+                # Concurrent API calls for title search
+                with ThreadPoolExecutor(max_workers=2) as executor:
+                    sonarr_future = executor.submit(sonarr_get, "/series/lookup", {"term": search_query})
+                    radarr_future = executor.submit(radarr_get, "/movie/lookup", {"term": search_query})
+                    
+                    sonarr_results = sonarr_future.result()
+                    radarr_results = radarr_future.result()
 
                 for item in sonarr_results[:10]:
-                    ratings_obj = item.get("ratings", {})
-                    rating = None
-                    if ratings_obj and isinstance(ratings_obj, dict):
-                        imdb_rating = ratings_obj.get("imdb", {})
-                        if isinstance(imdb_rating, dict):
-                            rating = imdb_rating.get("value")
                     search_results.append({
                         "title": item.get("title"),
                         "year": item.get("year"),
                         "type": "tv",
                         "overview": item.get("overview", "")[:200] + "..." if item.get("overview") else "",
                         "imdb_id": item.get("imdbId"),
-                        "rating": rating
+                        "rating": extract_rating(item.get("ratings"))
                     })
 
                 for item in radarr_results[:10]:
-                    ratings_obj = item.get("ratings", {})
-                    rating = None
-                    if ratings_obj and isinstance(ratings_obj, dict):
-                        imdb_rating = ratings_obj.get("imdb", {})
-                        if isinstance(imdb_rating, dict):
-                            rating = imdb_rating.get("value")
                     search_results.append({
                         "title": item.get("title"),
                         "year": item.get("year"),
                         "type": "movie",
                         "overview": item.get("overview", "")[:200] + "..." if item.get("overview") else "",
                         "imdb_id": item.get("imdbId"),
-                        "rating": rating
+                        "rating": extract_rating(item.get("ratings"))
                     })
 
             elif search_type == "actor":
@@ -1117,54 +1235,60 @@ def specific_search():
                     tmdb_credits = tmdb_get_person_credits(person_id, limit=ACTOR_SEARCH_LIMIT)
                     print(f"[specific_search] Found {len(tmdb_credits)} credits from TMDB")
 
-                    # Look up each title in Sonarr/Radarr to get full metadata
-                    for credit in tmdb_credits:
+                    # Look up each title in Sonarr/Radarr concurrently
+                    def lookup_credit(credit):
+                        """Lookup a single credit in Sonarr/Radarr."""
                         title = credit.get("title")
-                        year = credit.get("year")
                         media_type = credit.get("type")
 
                         if not title:
-                            continue
+                            return None
 
                         try:
                             if media_type == "tv":
                                 results = sonarr_get("/series/lookup", params={"term": title})
                                 if results:
                                     item = results[0]
-                                    ratings_obj = item.get("ratings", {})
-                                    rating = None
-                                    if ratings_obj and isinstance(ratings_obj, dict):
-                                        imdb_rating = ratings_obj.get("imdb", {})
-                                        if isinstance(imdb_rating, dict):
-                                            rating = imdb_rating.get("value")
-                                    search_results.append({
+                                    return {
                                         "title": item.get("title"),
                                         "year": item.get("year"),
                                         "type": "tv",
                                         "overview": item.get("overview", "")[:200] + "..." if item.get("overview") else "",
                                         "imdb_id": item.get("imdbId"),
-                                        "rating": rating
-                                    })
+                                        "rating": extract_rating(item.get("ratings"))
+                                    }
                             elif media_type == "movie":
                                 results = radarr_get("/movie/lookup", params={"term": title})
                                 if results:
                                     item = results[0]
-                                    ratings_obj = item.get("ratings", {})
-                                    rating = None
-                                    if ratings_obj and isinstance(ratings_obj, dict):
-                                        imdb_rating = ratings_obj.get("imdb", {})
-                                        if isinstance(imdb_rating, dict):
-                                            rating = imdb_rating.get("value")
-                                    search_results.append({
+                                    return {
                                         "title": item.get("title"),
                                         "year": item.get("year"),
                                         "type": "movie",
                                         "overview": item.get("overview", "")[:200] + "..." if item.get("overview") else "",
                                         "imdb_id": item.get("imdbId"),
-                                        "rating": rating
-                                    })
+                                        "rating": extract_rating(item.get("ratings"))
+                                    }
                         except Exception as lookup_error:
                             print(f"[specific_search] Error looking up '{title}': {lookup_error}")
+                        
+                        return None
+
+                    # Use ThreadPoolExecutor for concurrent lookups with per-future timeout
+                    with ThreadPoolExecutor(max_workers=5) as executor:
+                        futures = [executor.submit(lookup_credit, credit) for credit in tmdb_credits]
+                        
+                        # Process futures as they complete with per-future timeout
+                        for future in as_completed(futures):
+                            try:
+                                # 60 second timeout per individual future
+                                result = future.result(timeout=60)
+                                if result:
+                                    search_results.append(result)
+                            except TimeoutError:
+                                print(f"[specific_search] Timeout processing credit")
+                            except Exception as e:
+                                print(f"[specific_search] Error processing credit: {e}")
 
                     flash(f"Found {len(search_results)} titles featuring {person_name}", "success")
 
@@ -1611,10 +1735,21 @@ def history_page():
 
 @app.route("/history/clear", methods=["POST"])
 def clear_history():
-    global history
-    history = []
+    """Clear search history."""
+    with _history_lock:
+        history.clear()
     flash("History cleared successfully.", "success")
     return redirect(url_for("history_page"))
+
+
+@app.route("/cache/clear", methods=["POST"])
+def clear_cache():
+    """Clear library cache to force fresh data fetch."""
+    with _cache_lock:
+        _library_cache["sonarr"] = {"data": None, "timestamp": 0}
+        _library_cache["radarr"] = {"data": None, "timestamp": 0}
+    flash("Cache cleared successfully.", "success")
+    return redirect(url_for("index"))
 
 
 if __name__ == "__main__":
